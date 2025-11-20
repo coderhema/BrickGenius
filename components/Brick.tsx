@@ -37,7 +37,11 @@ const Brick: React.FC<BrickProps> = ({ data, isGhost = false, onLand, delay = 0 
 
   useFrame((state, delta) => {
     if (isGhost) {
+      // If ghost, we strictly follow the props. 
+      // The parent group might be moving this brick if it's part of a lifted group.
       if (meshRef.current) {
+        // If this is a simple ghost (builder mode), we set position directly.
+        // If it's inside a parent group (lifted), positionX/Z are local coords.
         meshRef.current.position.set(positionX, targetY, positionZ);
       }
       return;
@@ -85,24 +89,10 @@ const Brick: React.FC<BrickProps> = ({ data, isGhost = false, onLand, delay = 0 
   const materialProps = {
     color: isGhost ? data.color : new Color(data.color),
     transparent: isGhost,
-    opacity: isGhost ? 0.5 : 1,
+    opacity: isGhost ? 0.6 : 1,
     roughness: 0.2,
     metalness: 0.1,
   };
-
-  // Generate studs positions relative to the brick center
-  const studs = useMemo(() => {
-    const studList = [];
-    for (let i = 0; i < sizeX; i++) {
-      for (let j = 0; j < sizeZ; j++) {
-        // Local position relative to center
-        const sx = (i * BRICK_WIDTH) - xOffset;
-        const sz = (j * BRICK_DEPTH) - zOffset;
-        studList.push({ x: sx, z: sz, key: `${i}-${j}` });
-      }
-    }
-    return studList;
-  }, [sizeX, sizeZ, xOffset, zOffset]);
 
   return (
     <group ref={meshRef} position={[positionX, currentY, positionZ]} visible={!isWaiting}>
@@ -113,11 +103,18 @@ const Brick: React.FC<BrickProps> = ({ data, isGhost = false, onLand, delay = 0 
       </mesh>
 
       {/* Studs */}
-      {studs.map((stud) => (
-        <mesh key={stud.key} castShadow position={[stud.x, BRICK_HEIGHT / 2 + STUD_HEIGHT / 2, stud.z]}>
-          <cylinderGeometry args={[STUD_RADIUS, STUD_RADIUS, STUD_HEIGHT, 16]} />
-          <meshStandardMaterial {...materialProps} />
-        </mesh>
+      {/* We generate studs dynamically based on size */}
+      {Array.from({ length: sizeX }).map((_, i) => (
+          Array.from({ length: sizeZ }).map((_, j) => {
+            const sx = (i * BRICK_WIDTH) - xOffset;
+            const sz = (j * BRICK_DEPTH) - zOffset;
+            return (
+              <mesh key={`${i}-${j}`} castShadow position={[sx, BRICK_HEIGHT / 2 + STUD_HEIGHT / 2, sz]}>
+                <cylinderGeometry args={[STUD_RADIUS, STUD_RADIUS, STUD_HEIGHT, 16]} />
+                <meshStandardMaterial {...materialProps} />
+              </mesh>
+            )
+          })
       ))}
     </group>
   );

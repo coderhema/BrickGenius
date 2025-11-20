@@ -19,13 +19,18 @@ export interface BrickData {
   sizeX?: number; // Width in studs (default 1)
   sizeZ?: number; // Depth in studs (default 1)
   rotation?: number; // Rotation in radians (for animation/logic) currently simplified to axis alignment
+  
+  // For lifted groups
+  offsetX?: number; 
+  offsetY?: number; 
+  offsetZ?: number;
 }
 
 export interface GeneratedBuild {
   bricks: Array<Omit<BrickData, 'id'>>;
 }
 
-export type ToolMode = 'VIEW' | 'BUILD' | 'DELETE';
+export type ToolMode = 'VIEW' | 'BUILD' | 'DELETE' | 'MOVE';
 
 export interface BrickType {
   label: string;

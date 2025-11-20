@@ -190,6 +190,15 @@ const Controls: React.FC<ControlsProps> = ({
               </svg>
             </button>
             <button 
+              onClick={() => setToolMode('MOVE')}
+              className={`p-3 rounded-xl transition-all ${toolMode === 'MOVE' ? 'bg-purple-500 text-white shadow-md' : 'hover:bg-purple-50 text-purple-600'}`}
+              title="Hand / Move Mode"
+            >
+               <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 11.5V14m0-2.5v-6a1.5 1.5 0 113 0m-3 6a1.5 1.5 0 00-3 0v2a7.5 7.5 0 0015 0v-5a1.5 1.5 0 00-3 0m-6-3V11m0-5.5v-1a1.5 1.5 0 013 0v1m0 0V11m0-5.5a1.5 1.5 0 013 0v3m0 0V11" />
+              </svg>
+            </button>
+            <button 
               onClick={() => setToolMode('DELETE')}
               className={`p-3 rounded-xl transition-all ${toolMode === 'DELETE' ? 'bg-red-500 text-white shadow-md' : 'hover:bg-red-50 text-red-600'}`}
               title="Delete Mode"
@@ -219,7 +228,7 @@ const Controls: React.FC<ControlsProps> = ({
           <div className="bg-black/70 text-white p-4 rounded-xl backdrop-blur-sm max-w-xs hidden lg:block">
             <h3 className="font-bold text-sm mb-1 text-yellow-400">How to use</h3>
             <p className="text-xs text-gray-300">
-              Upload an image for AI build. Use sidebar to pick block size. <br/> Press 'R' to rotate blocks.
+              {toolMode === 'MOVE' ? "Click a block to lift group. 'R' to rotate. Click to place." : "Upload an image for AI build. Sidebar for size. 'R' rotates."}
             </p>
           </div>
         </div>

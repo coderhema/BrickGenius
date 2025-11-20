@@ -17,6 +17,9 @@ interface SceneProps {
   playLandedSound: () => void;
   buildKey: number;
   isAnimating: boolean;
+  liftedGroup?: { bricks: BrickData[], anchorId: string } | null;
+  onLiftBrick?: (id: string) => void;
+  onDropGroup?: (x: number, y: number, z: number) => void;
 }
 
 const GridPlane: React.FC<{
@@ -53,17 +56,21 @@ const SceneContent: React.FC<SceneProps> = ({
   rotated,
   playLandedSound,
   buildKey,
-  isAnimating
+  isAnimating,
+  liftedGroup,
+  onLiftBrick,
+  onDropGroup
 }) => {
   const [hoverPos, setHoverPos] = useState<{x: number, y: number, z: number} | null>(null);
 
   const snapToGrid = (val: number) => Math.round(val);
 
   const handlePointerMove = (point: Vector3, existingY: number = 0) => {
-    if (toolMode !== 'BUILD') {
+    if (toolMode !== 'BUILD' && toolMode !== 'MOVE') {
       setHoverPos(null);
       return;
     }
+    
     const x = snapToGrid(point.x);
     const z = snapToGrid(point.z);
     
@@ -73,35 +80,37 @@ const SceneContent: React.FC<SceneProps> = ({
       return;
     }
 
+    // Use existingY for stacking logic
     setHoverPos({ x, y: existingY, z });
   };
 
   const handleClick = () => {
     if (toolMode === 'BUILD' && hoverPos) {
       addBrick(hoverPos.x, hoverPos.y, hoverPos.z);
+    } else if (toolMode === 'MOVE' && liftedGroup && onDropGroup && hoverPos) {
+      onDropGroup(hoverPos.x, hoverPos.y, hoverPos.z);
     }
   };
 
   const onBrickClick = (e: ThreeEvent<MouseEvent>, brick: BrickData) => {
     e.stopPropagation();
+    
     if (toolMode === 'DELETE') {
       removeBrick(brick.id);
-    } else if (toolMode === 'BUILD') {
+    } 
+    else if (toolMode === 'MOVE' && !liftedGroup && onLiftBrick) {
+      onLiftBrick(brick.id);
+    }
+    else if (toolMode === 'BUILD') {
       if (e.face?.normal) {
         const normal = e.face.normal;
-        
-        const worldX = e.point.x;
-        const worldZ = e.point.z;
-
-        const gridX = Math.round(worldX);
+        const gridX = Math.round(e.point.x);
         const gridY = brick.y; 
-        const gridZ = Math.round(worldZ);
+        const gridZ = Math.round(e.point.z);
 
-        // If clicking Top Face (Y+)
         if (normal.y > 0.5) {
-           addBrick(gridX, gridY + 1, gridZ);
+           addBrick(Math.round(e.point.x), gridY + 1, Math.round(e.point.z));
         } else {
-           // Side building
            addBrick(
              gridX + Math.round(normal.x), 
              gridY + Math.round(normal.y), 
@@ -109,12 +118,59 @@ const SceneContent: React.FC<SceneProps> = ({
            );
         }
       }
+    } else if (toolMode === 'MOVE' && liftedGroup && onDropGroup) {
+        // We are holding a group and clicked another brick -> Attempt to place on top or side
+         if (e.face?.normal) {
+            const normal = e.face.normal;
+            const gridX = Math.round(e.point.x);
+            const gridY = brick.y; 
+            const gridZ = Math.round(e.point.z);
+            
+            // Determine anchor placement based on click normal
+            let targetX = gridX;
+            let targetY = gridY;
+            let targetZ = gridZ;
+
+            if (normal.y > 0.5) {
+                targetX = Math.round(e.point.x);
+                targetY = gridY + 1;
+                targetZ = Math.round(e.point.z);
+            } else {
+                targetX = gridX + Math.round(normal.x);
+                targetY = gridY + Math.round(normal.y);
+                targetZ = gridZ + Math.round(normal.z);
+            }
+            
+            onDropGroup(targetX, targetY, targetZ);
+         }
     }
   };
   
   const onBrickHover = (e: ThreeEvent<MouseEvent>, brick: BrickData) => {
     e.stopPropagation();
-     if (toolMode === 'BUILD' && e.face?.normal) {
+    
+    if (toolMode === 'MOVE' && liftedGroup) {
+        // While moving a group, hover logic is similar to build, determining where to drop
+        if (e.face?.normal) {
+            const normal = e.face.normal;
+            if (normal.y > 0.5) {
+                setHoverPos({
+                    x: Math.round(e.point.x),
+                    y: brick.y + 1,
+                    z: Math.round(e.point.z)
+                });
+            } else {
+                setHoverPos({
+                    x: Math.round(e.point.x) + Math.round(normal.x),
+                    y: brick.y + Math.round(normal.y),
+                    z: Math.round(e.point.z) + Math.round(normal.z)
+                });
+            }
+        }
+        return;
+    }
+
+    if (toolMode === 'BUILD' && e.face?.normal) {
         const normal = e.face.normal;
         const gridX = Math.round(e.point.x);
         const gridZ = Math.round(e.point.z);
@@ -132,7 +188,17 @@ const SceneContent: React.FC<SceneProps> = ({
                 z: gridZ + Math.round(normal.z)
             });
         }
-     }
+    } else if (toolMode === 'MOVE' && !liftedGroup) {
+        // Maybe highlight connected group here in future
+        // For now, just normal pointer
+        document.body.style.cursor = 'grab';
+    }
+  };
+
+  const onPointerMissed = () => {
+      if (toolMode === 'MOVE' && !liftedGroup) {
+          document.body.style.cursor = 'default';
+      }
   }
 
   const activeSizeX = rotated ? selectedBrickType.sizeZ : selectedBrickType.sizeX;
@@ -152,24 +218,25 @@ const SceneContent: React.FC<SceneProps> = ({
       </directionalLight>
       <Environment preset="city" />
 
-      <group>
+      <group onPointerMissed={onPointerMissed}>
         <group key={buildKey}>
           {bricks.map((brick, index) => (
             <mesh 
               key={brick.id}
               onClick={(e) => onBrickClick(e, brick)}
               onPointerMove={(e) => onBrickHover(e, brick)}
+              onPointerOut={() => { document.body.style.cursor = 'default'; }}
             >
               <Brick 
                 data={brick} 
                 onLand={playLandedSound} 
-                delay={isAnimating ? index * 100 : 0} // 100ms delay per brick
+                delay={isAnimating ? index * 100 : 0} 
               />
             </mesh>
           ))}
         </group>
 
-        {/* Ghost Brick */}
+        {/* Ghost Brick for Builder */}
         {toolMode === 'BUILD' && hoverPos && (
           <Brick 
             data={{ 
@@ -183,6 +250,25 @@ const SceneContent: React.FC<SceneProps> = ({
             }} 
             isGhost 
           />
+        )}
+
+        {/* Lifted Group "Ghost" */}
+        {toolMode === 'MOVE' && liftedGroup && hoverPos && (
+            <group position={[hoverPos.x, hoverPos.y, hoverPos.z]}>
+                {liftedGroup.bricks.map((b) => (
+                    <Brick 
+                        key={b.id}
+                        data={{
+                            ...b,
+                            // Render relative to the group anchor (which is at 0,0,0 of this group)
+                            x: b.offsetX || 0,
+                            y: b.offsetY || 0,
+                            z: b.offsetZ || 0,
+                        }}
+                        isGhost // Render as transparent/ghost
+                    />
+                ))}
+            </group>
         )}
 
         <GridPlane 
