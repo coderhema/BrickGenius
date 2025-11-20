@@ -1,0 +1,5 @@
+{
+  "name": "BrickGenius AI",
+  "description": "An AI-powered LEGO simulator. Upload an image to generate a build, or construct your own masterpiece block by block in a 3D world.",
+  "requestFramePermissions": []
+}
