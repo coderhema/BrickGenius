@@ -1,10 +1,39 @@
 import React, { useState } from 'react';
-import { Canvas, ThreeEvent } from '@react-three/fiber';
+import { Canvas, ThreeEvent, Object3DNode } from '@react-three/fiber';
 import { OrbitControls, Environment, Grid } from '@react-three/drei';
 import { BrickData, ToolMode, BrickType } from '../types';
 import { MAX_BOARD_SIZE } from '../constants';
 import Brick from './Brick';
-import { Vector3 } from 'three';
+import { Vector3, Group, Mesh, PlaneGeometry, MeshStandardMaterial, AmbientLight, DirectionalLight, OrthographicCamera } from 'three';
+
+// Extend JSX.IntrinsicElements to include Three.js elements managed by @react-three/fiber
+declare global {
+  namespace JSX {
+    interface IntrinsicElements {
+      group: any;
+      mesh: any;
+      planeGeometry: any;
+      meshStandardMaterial: any;
+      ambientLight: any;
+      directionalLight: any;
+      orthographicCamera: any;
+    }
+  }
+}
+
+declare module 'react' {
+  namespace JSX {
+    interface IntrinsicElements {
+      group: any;
+      mesh: any;
+      planeGeometry: any;
+      meshStandardMaterial: any;
+      ambientLight: any;
+      directionalLight: any;
+      orthographicCamera: any;
+    }
+  }
+}
 
 interface SceneProps {
   bricks: BrickData[];
@@ -47,11 +76,11 @@ const GridPlane: React.FC<{
 };
 
 const SceneContent: React.FC<SceneProps> = ({ 
-  bricks, 
+  bricks = [], 
   addBrick, 
   removeBrick, 
   selectedColor, 
-  toolMode,
+  toolMode, 
   selectedBrickType,
   rotated,
   playLandedSound,
@@ -220,7 +249,7 @@ const SceneContent: React.FC<SceneProps> = ({
 
       <group onPointerMissed={onPointerMissed}>
         <group key={buildKey}>
-          {bricks.map((brick, index) => (
+          {bricks?.map((brick, index) => (
             <mesh 
               key={brick.id}
               onClick={(e) => onBrickClick(e, brick)}
@@ -230,7 +259,8 @@ const SceneContent: React.FC<SceneProps> = ({
               <Brick 
                 data={brick} 
                 onLand={playLandedSound} 
-                delay={isAnimating ? index * 100 : 0} 
+                // Speed up animation: 35ms delay per brick instead of 100ms
+                delay={isAnimating ? index * 40 : 0} 
               />
             </mesh>
           ))}
@@ -255,7 +285,7 @@ const SceneContent: React.FC<SceneProps> = ({
         {/* Lifted Group "Ghost" */}
         {toolMode === 'MOVE' && liftedGroup && hoverPos && (
             <group position={[hoverPos.x, hoverPos.y, hoverPos.z]}>
-                {liftedGroup.bricks.map((b) => (
+                {liftedGroup.bricks?.map((b) => (
                     <Brick 
                         key={b.id}
                         data={{
@@ -287,7 +317,7 @@ const SceneContent: React.FC<SceneProps> = ({
         />
       </group>
       
-      <OrbitControls makeDefault minPolarAngle={0} maxPolarAngle={Math.PI / 2.1} />
+      <OrbitControls makeDefault enableDamping={true} dampingFactor={0.05} minPolarAngle={0} maxPolarAngle={Math.PI / 2.1} />
     </>
   );
 };

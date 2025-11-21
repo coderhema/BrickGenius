@@ -1,8 +1,33 @@
 import React, { useRef, useEffect, useState, useMemo } from 'react';
-import { Color, Group } from 'three';
-import { useFrame } from '@react-three/fiber';
+import { Color, Group, Mesh, BoxGeometry, MeshStandardMaterial, CylinderGeometry, Vector3 } from 'three';
+import { useFrame, Object3DNode } from '@react-three/fiber';
 import { BrickData } from '../types';
 import { BRICK_HEIGHT, BRICK_WIDTH, BRICK_DEPTH, STUD_RADIUS, STUD_HEIGHT } from '../constants';
+
+// Extend JSX.IntrinsicElements to include Three.js elements managed by @react-three/fiber
+declare global {
+  namespace JSX {
+    interface IntrinsicElements {
+      group: any;
+      mesh: any;
+      boxGeometry: any;
+      meshStandardMaterial: any;
+      cylinderGeometry: any;
+    }
+  }
+}
+
+declare module 'react' {
+  namespace JSX {
+    interface IntrinsicElements {
+      group: any;
+      mesh: any;
+      boxGeometry: any;
+      meshStandardMaterial: any;
+      cylinderGeometry: any;
+    }
+  }
+}
 
 interface BrickProps {
   data: BrickData;
@@ -14,8 +39,8 @@ interface BrickProps {
 const Brick: React.FC<BrickProps> = ({ data, isGhost = false, onLand, delay = 0 }) => {
   const meshRef = useRef<Group>(null);
   
-  const sizeX = data.sizeX || 1;
-  const sizeZ = data.sizeZ || 1;
+  const sizeX = Math.max(1, data.sizeX || 1);
+  const sizeZ = Math.max(1, data.sizeZ || 1);
 
   // Animation state
   const targetY = data.y * BRICK_HEIGHT + (BRICK_HEIGHT / 2);
@@ -23,6 +48,10 @@ const Brick: React.FC<BrickProps> = ({ data, isGhost = false, onLand, delay = 0 
   const startY = 35 + Math.random() * 10;
   const [currentY, setCurrentY] = useState(isGhost ? targetY : startY);
   const [landed, setLanded] = useState(isGhost);
+  
+  // Physics / Bounce state
+  const velocityY = useRef(0);
+  const [scaleY, setScaleY] = useState(1);
   
   // Sequential Animation Logic
   const startTimeRef = useRef(Date.now() + delay);
@@ -37,12 +66,12 @@ const Brick: React.FC<BrickProps> = ({ data, isGhost = false, onLand, delay = 0 
 
   useFrame((state, delta) => {
     if (isGhost) {
-      // If ghost, we strictly follow the props. 
-      // The parent group might be moving this brick if it's part of a lifted group.
+      // If ghost, we strictly follow the props (or lerp to them for smooth "Hand" feel)
       if (meshRef.current) {
-        // If this is a simple ghost (builder mode), we set position directly.
-        // If it's inside a parent group (lifted), positionX/Z are local coords.
-        meshRef.current.position.set(positionX, targetY, positionZ);
+         // If this is a simple ghost (builder mode), we set position directly.
+         meshRef.current.position.x = positionX;
+         meshRef.current.position.z = positionZ;
+         meshRef.current.position.y = targetY;
       }
       return;
     }
@@ -56,22 +85,44 @@ const Brick: React.FC<BrickProps> = ({ data, isGhost = false, onLand, delay = 0 
     }
 
     if (!landed && meshRef.current) {
-      // Gravity/fall animation
-      const speed = 25 * delta; // Fast fall
-      const dist = currentY - targetY;
+      // Physics Constants - Tuned for "Locking" feel
+      // High gravity for fast drop
+      const gravity = 250; 
+      // Very low bounce for "hard plastic" snap
+      const bounceFactor = 0.05; 
       
-      if (dist < 0.08) {
-        // Snap to grid
-        setCurrentY(targetY);
-        setLanded(true);
-        if (meshRef.current) meshRef.current.position.set(positionX, targetY, positionZ);
-        if (onLand) onLand(); // Play sound on impact
-      } else {
-        // Fall down
-        const nextY = currentY - (dist * speed * 0.5) - 0.1;
-        setCurrentY(Math.max(nextY, targetY));
-        meshRef.current.position.set(positionX, nextY, positionZ);
+      // Apply Gravity
+      velocityY.current -= gravity * delta;
+      let nextY = currentY + velocityY.current * delta;
+
+      // Floor Collision (Target Y)
+      if (nextY <= targetY) {
+        nextY = targetY;
+        
+        // Bounce logic
+        if (Math.abs(velocityY.current) > 8) { // Higher threshold so small bounces stop immediately
+           // Bounce back up (very slightly)
+           velocityY.current = -velocityY.current * bounceFactor;
+           
+           // Tiny squash effect on impact - barely perceptible for hard plastic
+           setScaleY(0.98); 
+        } else {
+           // Settled / Locked
+           setLanded(true);
+           velocityY.current = 0;
+           setScaleY(1);
+           if (onLand) onLand(); // Play sound on impact
+        }
       }
+
+      setCurrentY(nextY);
+      meshRef.current.position.set(positionX, nextY, positionZ);
+      
+      // Recover scale (elasticity) - Instant recovery for hard material
+      if (scaleY < 1) {
+          setScaleY(Math.min(1, scaleY + delta * 25));
+      }
+      meshRef.current.scale.set(1, scaleY, 1);
     }
   });
 
@@ -83,8 +134,14 @@ const Brick: React.FC<BrickProps> = ({ data, isGhost = false, onLand, delay = 0 
       setCurrentY(startY);
       setIsWaiting(delay > 0);
       startTimeRef.current = Date.now() + delay;
+      velocityY.current = 0;
+      setScaleY(1);
     }
   }, [data.id, isGhost, delay]);
+
+  // Defensive check for size array generation
+  const safeSizeX = Math.max(1, Math.floor(sizeX));
+  const safeSizeZ = Math.max(1, Math.floor(sizeZ));
 
   const materialProps = {
     color: isGhost ? data.color : new Color(data.color),
@@ -104,8 +161,8 @@ const Brick: React.FC<BrickProps> = ({ data, isGhost = false, onLand, delay = 0 
 
       {/* Studs */}
       {/* We generate studs dynamically based on size */}
-      {Array.from({ length: sizeX }).map((_, i) => (
-          Array.from({ length: sizeZ }).map((_, j) => {
+      {Array.from({ length: safeSizeX }).map((_, i) => (
+          Array.from({ length: safeSizeZ }).map((_, j) => {
             const sx = (i * BRICK_WIDTH) - xOffset;
             const sz = (j * BRICK_DEPTH) - zOffset;
             return (

@@ -14,6 +14,10 @@ interface ControlsProps {
   setSelectedBrickType: (type: BrickType) => void;
   onReplay: () => void;
   hasBricks: boolean;
+  onUndo: () => void;
+  onRedo: () => void;
+  canUndo: boolean;
+  canRedo: boolean;
 }
 
 const Controls: React.FC<ControlsProps> = ({
@@ -27,7 +31,11 @@ const Controls: React.FC<ControlsProps> = ({
   selectedBrickType,
   setSelectedBrickType,
   onReplay,
-  hasBricks
+  hasBricks,
+  onUndo,
+  onRedo,
+  canUndo,
+  canRedo
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -94,6 +102,9 @@ const Controls: React.FC<ControlsProps> = ({
             <div className="text-xs text-gray-500 text-center">
                 Press <span className="font-bold text-gray-800 bg-gray-200 px-1 rounded">R</span> to Rotate
             </div>
+            <div className="text-xs text-gray-500 text-center mt-1">
+                Undo: <span className="font-bold text-gray-800 bg-gray-200 px-1 rounded">Ctrl+Z</span>
+            </div>
         </div>
       </div>
 
@@ -138,6 +149,30 @@ const Controls: React.FC<ControlsProps> = ({
                   Load Image
                 </>
                )}
+            </button>
+
+            {/* Undo Button */}
+            <button 
+              onClick={onUndo}
+              disabled={!canUndo}
+              className={`p-3 rounded-xl font-bold shadow-md pointer-events-auto transition-colors border-b-4 active:border-b-0 active:translate-y-1 ${canUndo ? 'bg-white text-gray-700 hover:bg-gray-50 border-gray-200' : 'bg-gray-100 text-gray-300 border-gray-100 cursor-not-allowed'}`}
+              title="Undo (Ctrl+Z)"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+              </svg>
+            </button>
+
+            {/* Redo Button */}
+             <button 
+              onClick={onRedo}
+              disabled={!canRedo}
+              className={`p-3 rounded-xl font-bold shadow-md pointer-events-auto transition-colors border-b-4 active:border-b-0 active:translate-y-1 ${canRedo ? 'bg-white text-gray-700 hover:bg-gray-50 border-gray-200' : 'bg-gray-100 text-gray-300 border-gray-100 cursor-not-allowed'}`}
+              title="Redo (Ctrl+Y)"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 10h-10a8 8 0 00-8 8v2M21 10l-6 6m6-6l-6-6" />
+              </svg>
             </button>
 
             {/* Replay Button */}

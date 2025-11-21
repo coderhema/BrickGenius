@@ -8,12 +8,15 @@ import { generateLegoFromImage } from './services/geminiService';
 
 // Helper to optimize 1x1 voxels into larger standard bricks
 const optimizeBricks = (rawBricks: {x: number, y: number, z: number, color: string}[]): BrickData[] => {
+  if (!rawBricks || !Array.isArray(rawBricks)) return [];
+  
   const optimized: BrickData[] = [];
   
   // Group bricks by Layer (Y) and Color
   const bricksByLayerColor = new Map<string, Set<string>>();
   
   rawBricks.forEach(b => {
+    if (!b) return;
     const key = `${b.y},${b.color}`;
     if (!bricksByLayerColor.has(key)) {
       bricksByLayerColor.set(key, new Set());
@@ -22,7 +25,8 @@ const optimizeBricks = (rawBricks: {x: number, y: number, z: number, color: stri
   });
 
   // Defined brick sizes sorted by area (descending) to prioritize larger blocks
-  const sortedBrickTypes = [...BRICK_TYPES].sort((a, b) => 
+  // Fallback to empty array if BRICK_TYPES is undefined for any reason
+  const sortedBrickTypes = [...(BRICK_TYPES || [])].sort((a, b) => 
     (b.sizeX * b.sizeZ) - (a.sizeX * a.sizeZ)
   );
 
@@ -133,9 +137,13 @@ const optimizeBricks = (rawBricks: {x: number, y: number, z: number, color: stri
 
 function App() {
   const [bricks, setBricks] = useState<BrickData[]>([]);
+  // History Management
+  const [history, setHistory] = useState<BrickData[][]>([[]]);
+  const [currentHistoryIndex, setCurrentHistoryIndex] = useState(0);
+
   const [toolMode, setToolMode] = useState<ToolMode>('VIEW');
   const [selectedColor, setSelectedColor] = useState<string>(BrickColor.RED);
-  const [selectedBrickType, setSelectedBrickType] = useState<BrickType>(BRICK_TYPES[0]);
+  const [selectedBrickType, setSelectedBrickType] = useState<BrickType>(BRICK_TYPES?.[0] || { label: '1x1', sizeX: 1, sizeZ: 1 });
   const [isGenerating, setIsGenerating] = useState(false);
   const [rotated, setRotated] = useState(false);
   const [buildKey, setBuildKey] = useState(0);
@@ -203,8 +211,66 @@ function App() {
     }
   }, []);
 
+  // ---- History Logic ----
+  const saveToHistory = useCallback((newBricks: BrickData[]) => {
+    setHistory(prev => {
+      const newHistory = prev.slice(0, currentHistoryIndex + 1);
+      newHistory.push(newBricks);
+      return newHistory;
+    });
+    setCurrentHistoryIndex(prev => prev + 1);
+    setBricks(newBricks);
+  }, [currentHistoryIndex]);
+
+  const undo = useCallback(() => {
+    if (currentHistoryIndex > 0) {
+      const newIndex = currentHistoryIndex - 1;
+      setCurrentHistoryIndex(newIndex);
+      // Safe check for history existence
+      if (history[newIndex]) {
+        setBricks(history[newIndex]);
+        setLiftedGroup(null); // Cancel any active moves
+      }
+    }
+  }, [history, currentHistoryIndex]);
+
+  const redo = useCallback(() => {
+    if (currentHistoryIndex < history.length - 1) {
+      const newIndex = currentHistoryIndex + 1;
+      setCurrentHistoryIndex(newIndex);
+      // Safe check for history existence
+      if (history[newIndex]) {
+        setBricks(history[newIndex]);
+        setLiftedGroup(null);
+      }
+    }
+  }, [history, currentHistoryIndex]);
+
+  // Keyboard Shortcuts: Undo/Redo
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey) {
+        if (e.key.toLowerCase() === 'z') {
+          if (e.shiftKey) {
+            redo();
+          } else {
+            undo();
+          }
+          e.preventDefault();
+        } else if (e.key.toLowerCase() === 'y') {
+          redo();
+          e.preventDefault();
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [undo, redo]);
+
+
   // Graph Search for connected bricks
   const getConnectedBricks = (startBrickId: string, allBricks: BrickData[]): string[] => {
+    if (!allBricks) return [];
     const startBrick = allBricks.find(b => b.id === startBrickId);
     if (!startBrick) return [];
 
@@ -278,7 +344,7 @@ function App() {
   // Rotation hotkey
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() === 'r') {
+      if (e.key.toLowerCase() === 'r' && !e.metaKey && !e.ctrlKey) {
         rotateLiftedGroup();
       }
     };
@@ -302,18 +368,22 @@ function App() {
       rotation: rotated ? 90 : 0
     };
     
-    setBricks((prev) => [...prev, newBrick]);
+    const newBricks = [...(bricks || []), newBrick];
+    saveToHistory(newBricks);
     playLandedSound();
-  }, [selectedColor, selectedBrickType, rotated, playLandedSound]);
+  }, [bricks, selectedColor, selectedBrickType, rotated, playLandedSound, saveToHistory]);
 
   // Handle Move/Lift
   const handleLiftBrick = (brickId: string) => {
+    if (!bricks) return;
     // 1. Find all connected bricks
     const connectedIds = getConnectedBricks(brickId, bricks);
     
     // 2. Extract them
     const group = bricks.filter(b => connectedIds.includes(b.id));
-    const anchorBrick = group.find(b => b.id === brickId)!;
+    const anchorBrick = group.find(b => b.id === brickId);
+
+    if (!anchorBrick) return;
     
     // 3. Calculate offsets relative to anchor
     const groupWithOffsets = group.map(b => ({
@@ -324,7 +394,8 @@ function App() {
     }));
 
     // 4. Remove from board and set to lifted
-    setBricks(prev => prev.filter(b => !connectedIds.includes(b.id)));
+    const remainingBricks = bricks.filter(b => !connectedIds.includes(b.id));
+    saveToHistory(remainingBricks);
     setLiftedGroup({ bricks: groupWithOffsets, anchorId: brickId });
     playLandedSound(); // Sound feedback for pickup
   };
@@ -347,7 +418,7 @@ function App() {
     // 2. Simple Collision Check (prevent overlapping existing bricks)
     // Note: This is a basic check. A robust one would check all proposed bricks against all existing.
     const hasCollision = proposedBricks.some(pb => {
-        return bricks.some(eb => {
+        return (bricks || []).some(eb => {
              // If overlap in 3D space
              const xOverlap = Math.max(pb.x, eb.x) < Math.min(pb.x + (pb.sizeX||1), eb.x + (eb.sizeX||1));
              const zOverlap = Math.max(pb.z, eb.z) < Math.min(pb.z + (pb.sizeZ||1), eb.z + (eb.sizeZ||1));
@@ -357,7 +428,8 @@ function App() {
     });
 
     if (!hasCollision) {
-        setBricks(prev => [...prev, ...proposedBricks]);
+        const newBricks = [...(bricks || []), ...proposedBricks];
+        saveToHistory(newBricks);
         setLiftedGroup(null);
         playLandedSound();
     } else {
@@ -367,14 +439,15 @@ function App() {
 
   // Remove a brick by ID
   const removeBrick = useCallback((id: string) => {
-    setBricks((prev) => prev.filter((b) => b.id !== id));
-  }, []);
+    const newBricks = (bricks || []).filter((b) => b.id !== id);
+    saveToHistory(newBricks);
+  }, [bricks, saveToHistory]);
 
   // Clear all bricks
   const clearBricks = useCallback(() => {
-    setBricks([]);
+    saveToHistory([]);
     setLiftedGroup(null);
-  }, []);
+  }, [saveToHistory]);
 
   // Replay Animation
   const handleReplay = useCallback(() => {
@@ -382,16 +455,17 @@ function App() {
     setBuildKey(prev => prev + 1);
     
     // Automatically disable animation mode after expected duration so manual builds don't lag
-    const duration = bricks.length * 100 + 2500;
+    // Update duration calculation to match 35ms delay per brick + buffer
+    const duration = (bricks?.length || 0) * 35 + 1000;
     setTimeout(() => setIsAnimating(false), duration);
-  }, [bricks.length]);
+  }, [bricks]);
 
   // Handle AI Generation
   const handleGenerate = async (file: File) => {
     setIsGenerating(true);
-    setBricks([]); 
     setToolMode('VIEW');
     setLiftedGroup(null);
+    // Note: We don't clear bricks here until we have the result, to avoid flashing empty board if error.
 
     try {
       const result = await generateLegoFromImage(file);
@@ -411,11 +485,12 @@ function App() {
         // Sort by Y for animation order
         optimizedBricks.sort((a, b) => a.y - b.y);
 
-        setBricks(optimizedBricks);
+        saveToHistory(optimizedBricks);
         
         // Enable animation sequence
         setIsAnimating(true);
-        const duration = optimizedBricks.length * 100 + 2500;
+        // Update duration calculation to match 35ms delay per brick + buffer
+        const duration = optimizedBricks.length * 35 + 1000;
         setTimeout(() => setIsAnimating(false), duration);
       }
     } catch (error) {
@@ -440,11 +515,15 @@ function App() {
         selectedBrickType={selectedBrickType}
         setSelectedBrickType={setSelectedBrickType}
         onReplay={handleReplay}
-        hasBricks={bricks.length > 0}
+        hasBricks={bricks?.length > 0}
+        onUndo={undo}
+        onRedo={redo}
+        canUndo={currentHistoryIndex > 0}
+        canRedo={currentHistoryIndex < history.length - 1}
       />
 
       <Scene 
-        bricks={bricks} 
+        bricks={bricks || []} 
         addBrick={addBrick} 
         removeBrick={removeBrick}
         selectedColor={selectedColor}
