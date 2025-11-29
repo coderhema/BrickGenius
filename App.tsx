@@ -24,9 +24,8 @@ const optimizeBricks = (rawBricks: {x: number, y: number, z: number, color: stri
     bricksByLayerColor.get(key)?.add(`${b.x},${b.z}`);
   });
 
-  // Defined brick sizes sorted by area (descending) to prioritize larger blocks
-  // Fallback to empty array if BRICK_TYPES is undefined for any reason
-  const sortedBrickTypes = [...(BRICK_TYPES || [])].sort((a, b) => 
+  // Filter out special types for auto-optimization (keep strictly standard blocks)
+  const standardTypes = (BRICK_TYPES || []).filter(t => !t.specialType).sort((a, b) => 
     (b.sizeX * b.sizeZ) - (a.sizeX * a.sizeZ)
   );
 
@@ -53,7 +52,7 @@ const optimizeBricks = (rawBricks: {x: number, y: number, z: number, color: stri
       // Try to fit the largest possible brick starting at (x, z)
       let bestFit: { type: BrickType, rotated: boolean } | null = null;
 
-      for (const brickType of sortedBrickTypes) {
+      for (const brickType of standardTypes) {
          // Try Standard Orientation
          let fit = true;
          for(let i = 0; i < brickType.sizeX; i++) {
@@ -115,7 +114,7 @@ const optimizeBricks = (rawBricks: {x: number, y: number, z: number, color: stri
             rotation: bestFit.rotated ? 90 : 0 
          });
       } else {
-         // Fallback 1x1 (should be caught by loop logic but essentially never hit if 1x1 is in sortedBrickTypes)
+         // Fallback 1x1 
          if (!processed.has(coordKey)) {
             processed.add(coordKey);
             optimized.push({
@@ -156,25 +155,22 @@ function App() {
   // Sound Effect - Plays when a brick hits the ground/another brick
   const playLandedSound = useCallback(() => {
     try {
-      // Initialize AudioContext lazily
       if (!audioContextRef.current) {
         audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
       }
       
       const ctx = audioContextRef.current;
-
-      // Resume context if suspended (browser autoplay policy)
       if (ctx.state === 'suspended') {
         ctx.resume().catch(console.error);
       }
       
       const t = ctx.currentTime;
       
-      // Layer 1: The "Click" (Sharp, high-pitched snap of plastic studs)
+      // Layer 1: The "Click"
       const oscClick = ctx.createOscillator();
       const gainClick = ctx.createGain();
       
-      oscClick.type = 'square'; // Square wave for "plastic" character
+      oscClick.type = 'square';
       oscClick.frequency.setValueAtTime(1200, t);
       oscClick.frequency.exponentialRampToValueAtTime(600, t + 0.02);
       
@@ -187,12 +183,11 @@ function App() {
       oscClick.start(t);
       oscClick.stop(t + 0.04);
       
-      // Layer 2: The "Clack" (Resonant body impact)
+      // Layer 2: The "Clack"
       const oscClack = ctx.createOscillator();
       const gainClack = ctx.createGain();
       
-      oscClack.type = 'sine'; // Sine/Triangle for the body weight
-      // Slight pitch randomization for natural variation
+      oscClack.type = 'sine';
       const basePitch = 350 + (Math.random() * 60 - 30); 
       oscClack.frequency.setValueAtTime(basePitch, t);
       oscClack.frequency.exponentialRampToValueAtTime(100, t + 0.08);
@@ -226,10 +221,9 @@ function App() {
     if (currentHistoryIndex > 0) {
       const newIndex = currentHistoryIndex - 1;
       setCurrentHistoryIndex(newIndex);
-      // Safe check for history existence
       if (history[newIndex]) {
         setBricks(history[newIndex]);
-        setLiftedGroup(null); // Cancel any active moves
+        setLiftedGroup(null);
       }
     }
   }, [history, currentHistoryIndex]);
@@ -238,7 +232,6 @@ function App() {
     if (currentHistoryIndex < history.length - 1) {
       const newIndex = currentHistoryIndex + 1;
       setCurrentHistoryIndex(newIndex);
-      // Safe check for history existence
       if (history[newIndex]) {
         setBricks(history[newIndex]);
         setLiftedGroup(null);
@@ -246,7 +239,6 @@ function App() {
     }
   }, [history, currentHistoryIndex]);
 
-  // Keyboard Shortcuts: Undo/Redo
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey) {
@@ -268,48 +260,46 @@ function App() {
   }, [undo, redo]);
 
 
-  // Graph Search for connected bricks
-  const getConnectedBricks = (startBrickId: string, allBricks: BrickData[]): string[] => {
-    if (!allBricks) return [];
+  // Helper: Get Liftable Group (Upwards only)
+  // Allows breaking a stack by grabbing a middle brick.
+  const getLiftableBricks = (startBrickId: string, allBricks: BrickData[]): string[] => {
     const startBrick = allBricks.find(b => b.id === startBrickId);
     if (!startBrick) return [];
 
     const queue = [startBrick];
-    const visited = new Set<string>([startBrickId]);
-    const connectedIds: string[] = [startBrickId];
+    const resultIds = new Set<string>([startBrickId]);
 
-    const areConnected = (b1: BrickData, b2: BrickData) => {
-      // Check vertical adjacency (stacking)
-      const yDiff = Math.abs(b1.y - b2.y);
-      if (yDiff !== 1) return false;
+    // Check intersection/overlap
+    const isOverlapping = (b1: BrickData, b2: BrickData) => {
+        const b1W = b1.sizeX || 1;
+        const b1D = b1.sizeZ || 1;
+        const b2W = b2.sizeX || 1;
+        const b2D = b2.sizeZ || 1;
 
-      // Check horizontal overlap
-      const b1Width = b1.sizeX || 1;
-      const b1Depth = b1.sizeZ || 1;
-      const b2Width = b2.sizeX || 1;
-      const b2Depth = b2.sizeZ || 1;
-
-      const xOverlap = Math.max(b1.x, b2.x) < Math.min(b1.x + b1Width, b2.x + b2Width);
-      const zOverlap = Math.max(b1.z, b2.z) < Math.min(b1.z + b1Depth, b2.z + b2Depth);
-
-      return xOverlap && zOverlap;
+        // Use slight margin to catch exact alignments
+        const xOverlap = Math.max(b1.x, b2.x) < Math.min(b1.x + b1W, b2.x + b2W);
+        const zOverlap = Math.max(b1.z, b2.z) < Math.min(b1.z + b1D, b2.z + b2D);
+        return xOverlap && zOverlap;
     };
 
     while (queue.length > 0) {
       const current = queue.shift()!;
+      
+      // Find all bricks immediately ON TOP of 'current'
+      // This enforces upward-only traversal
+      const supported = allBricks.filter(b => 
+        !resultIds.has(b.id) && 
+        b.y === current.y + 1 &&
+        isOverlapping(current, b)
+      );
 
-      // Find neighbors in allBricks that are connected to 'current'
-      // Optimization: In a real large app, we'd use a spatial grid, but O(N^2) for <200 bricks is fine
-      for (const brick of allBricks) {
-        if (!visited.has(brick.id) && areConnected(current, brick)) {
-          visited.add(brick.id);
-          connectedIds.push(brick.id);
-          queue.push(brick);
-        }
-      }
+      supported.forEach(b => {
+        resultIds.add(b.id);
+        queue.push(b);
+      });
     }
 
-    return connectedIds;
+    return Array.from(resultIds);
   };
 
   const rotateLiftedGroup = useCallback(() => {
@@ -321,27 +311,24 @@ function App() {
     setLiftedGroup(prev => {
         if (!prev) return null;
         const newBricks = prev.bricks.map(b => {
-            // Rotate 90 degrees (x, z) -> (z, -x) relative to 0,0 (offset base)
+            // Rotate 90 degrees around anchor (0,0)
             const newOffsetX = b.offsetZ!;
-            const newOffsetZ = -b.offsetX! - (b.sizeX || 1); // Adjust position due to pivot corner
+            const newOffsetZ = -b.offsetX! - (b.sizeX || 1); // Compensate for pivot
             
-            // Swap dimensions
             return {
                 ...b,
                 offsetX: newOffsetX,
                 offsetZ: newOffsetZ,
-                // Fix dimension swap logic: width becomes depth
-                // We need to shift position because pivot is top-left
-                // Actually, let's just swap sizeX/sizeZ and rely on visual update
+                // Swap dimensions
                 sizeX: b.sizeZ,
-                sizeZ: b.sizeX
+                sizeZ: b.sizeX,
+                rotation: b.rotation === 0 ? 90 : 0
             };
         });
         return { ...prev, bricks: newBricks };
     });
   }, [liftedGroup]);
 
-  // Rotation hotkey
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key.toLowerCase() === 'r' && !e.metaKey && !e.ctrlKey) {
@@ -352,7 +339,6 @@ function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [rotateLiftedGroup]);
 
-  // Add a brick
   const addBrick = useCallback((x: number, y: number, z: number) => {
     const sizeX = rotated ? selectedBrickType.sizeZ : selectedBrickType.sizeX;
     const sizeZ = rotated ? selectedBrickType.sizeX : selectedBrickType.sizeZ;
@@ -365,7 +351,8 @@ function App() {
       color: selectedColor,
       sizeX,
       sizeZ,
-      rotation: rotated ? 90 : 0
+      rotation: rotated ? 90 : 0,
+      specialType: selectedBrickType.specialType
     };
     
     const newBricks = [...(bricks || []), newBrick];
@@ -373,38 +360,34 @@ function App() {
     playLandedSound();
   }, [bricks, selectedColor, selectedBrickType, rotated, playLandedSound, saveToHistory]);
 
-  // Handle Move/Lift
   const handleLiftBrick = (brickId: string) => {
     if (!bricks) return;
-    // 1. Find all connected bricks
-    const connectedIds = getConnectedBricks(brickId, bricks);
     
-    // 2. Extract them
-    const group = bricks.filter(b => connectedIds.includes(b.id));
+    // Use new Lift logic: Grab clicked brick + everything physically supported by it
+    const liftableIds = getLiftableBricks(brickId, bricks);
+    
+    const group = bricks.filter(b => liftableIds.includes(b.id));
     const anchorBrick = group.find(b => b.id === brickId);
 
     if (!anchorBrick) return;
     
-    // 3. Calculate offsets relative to anchor
+    // Calculate relative offsets
     const groupWithOffsets = group.map(b => ({
         ...b,
         offsetX: b.x - anchorBrick.x,
-        offsetY: b.y - anchorBrick.y,
+        offsetY: b.y - anchorBrick.y, // Positive since we only grab upwards
         offsetZ: b.z - anchorBrick.z,
     }));
 
-    // 4. Remove from board and set to lifted
-    const remainingBricks = bricks.filter(b => !connectedIds.includes(b.id));
+    const remainingBricks = bricks.filter(b => !liftableIds.includes(b.id));
     saveToHistory(remainingBricks);
     setLiftedGroup({ bricks: groupWithOffsets, anchorId: brickId });
-    playLandedSound(); // Sound feedback for pickup
+    playLandedSound();
   };
 
-  // Handle Drop Group
   const handleDropGroup = (anchorX: number, anchorY: number, anchorZ: number) => {
     if (!liftedGroup) return;
 
-    // 1. Reconstruct world positions
     const proposedBricks = liftedGroup.bricks.map(b => ({
         ...b,
         x: anchorX + (b.offsetX || 0),
@@ -415,11 +398,9 @@ function App() {
         offsetZ: undefined
     }));
 
-    // 2. Simple Collision Check (prevent overlapping existing bricks)
-    // Note: This is a basic check. A robust one would check all proposed bricks against all existing.
+    // Collision Check
     const hasCollision = proposedBricks.some(pb => {
         return (bricks || []).some(eb => {
-             // If overlap in 3D space
              const xOverlap = Math.max(pb.x, eb.x) < Math.min(pb.x + (pb.sizeX||1), eb.x + (eb.sizeX||1));
              const zOverlap = Math.max(pb.z, eb.z) < Math.min(pb.z + (pb.sizeZ||1), eb.z + (eb.sizeZ||1));
              const yOverlap = pb.y === eb.y;
@@ -432,46 +413,35 @@ function App() {
         saveToHistory(newBricks);
         setLiftedGroup(null);
         playLandedSound();
-    } else {
-        // Optional: Error sound or visual feedback
     }
   };
 
-  // Remove a brick by ID
   const removeBrick = useCallback((id: string) => {
     const newBricks = (bricks || []).filter((b) => b.id !== id);
     saveToHistory(newBricks);
   }, [bricks, saveToHistory]);
 
-  // Clear all bricks
   const clearBricks = useCallback(() => {
     saveToHistory([]);
     setLiftedGroup(null);
   }, [saveToHistory]);
 
-  // Replay Animation
   const handleReplay = useCallback(() => {
     setIsAnimating(true);
     setBuildKey(prev => prev + 1);
-    
-    // Automatically disable animation mode after expected duration so manual builds don't lag
-    // Update duration calculation to match 35ms delay per brick + buffer
-    const duration = (bricks?.length || 0) * 35 + 1000;
+    const duration = (bricks?.length || 0) * 15 + 1000;
     setTimeout(() => setIsAnimating(false), duration);
   }, [bricks]);
 
-  // Handle AI Generation
   const handleGenerate = async (file: File) => {
     setIsGenerating(true);
     setToolMode('VIEW');
     setLiftedGroup(null);
-    // Note: We don't clear bricks here until we have the result, to avoid flashing empty board if error.
 
     try {
       const result = await generateLegoFromImage(file);
       
       if (result && result.bricks) {
-        // Extract raw data
         const rawBricks = result.bricks.map(b => ({
             x: b.x,
             y: b.y,
@@ -479,18 +449,13 @@ function App() {
             color: b.color || BrickColor.RED
         }));
 
-        // Optimize: Merge 1x1 voxels into larger standard blocks
         const optimizedBricks = optimizeBricks(rawBricks);
-        
-        // Sort by Y for animation order
         optimizedBricks.sort((a, b) => a.y - b.y);
 
         saveToHistory(optimizedBricks);
         
-        // Enable animation sequence
         setIsAnimating(true);
-        // Update duration calculation to match 35ms delay per brick + buffer
-        const duration = optimizedBricks.length * 35 + 1000;
+        const duration = optimizedBricks.length * 15 + 1000;
         setTimeout(() => setIsAnimating(false), duration);
       }
     } catch (error) {
@@ -503,7 +468,6 @@ function App() {
 
   return (
     <div className="w-full h-screen bg-gradient-to-b from-blue-100 to-white relative overflow-hidden">
-      
       <Controls 
         toolMode={toolMode}
         setToolMode={setToolMode}
@@ -521,7 +485,6 @@ function App() {
         canUndo={currentHistoryIndex > 0}
         canRedo={currentHistoryIndex < history.length - 1}
       />
-
       <Scene 
         bricks={bricks || []} 
         addBrick={addBrick} 
@@ -537,7 +500,6 @@ function App() {
         onLiftBrick={handleLiftBrick}
         onDropGroup={handleDropGroup}
       />
-      
     </div>
   );
 }

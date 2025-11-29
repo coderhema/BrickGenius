@@ -6,35 +6,6 @@ import { MAX_BOARD_SIZE } from '../constants';
 import Brick from './Brick';
 import { Vector3, Group, Mesh, PlaneGeometry, MeshStandardMaterial, AmbientLight, DirectionalLight, OrthographicCamera } from 'three';
 
-// Extend JSX.IntrinsicElements to include Three.js elements managed by @react-three/fiber
-declare global {
-  namespace JSX {
-    interface IntrinsicElements {
-      group: any;
-      mesh: any;
-      planeGeometry: any;
-      meshStandardMaterial: any;
-      ambientLight: any;
-      directionalLight: any;
-      orthographicCamera: any;
-    }
-  }
-}
-
-declare module 'react' {
-  namespace JSX {
-    interface IntrinsicElements {
-      group: any;
-      mesh: any;
-      planeGeometry: any;
-      meshStandardMaterial: any;
-      ambientLight: any;
-      directionalLight: any;
-      orthographicCamera: any;
-    }
-  }
-}
-
 interface SceneProps {
   bricks: BrickData[];
   addBrick: (x: number, y: number, z: number) => void;
@@ -109,8 +80,9 @@ const SceneContent: React.FC<SceneProps> = ({
       return;
     }
 
-    // Use existingY for stacking logic
-    setHoverPos({ x, y: existingY, z });
+    // Ensure we don't go below ground
+    const safeY = Math.max(0, existingY);
+    setHoverPos({ x, y: safeY, z });
   };
 
   const handleClick = () => {
@@ -148,14 +120,12 @@ const SceneContent: React.FC<SceneProps> = ({
         }
       }
     } else if (toolMode === 'MOVE' && liftedGroup && onDropGroup) {
-        // We are holding a group and clicked another brick -> Attempt to place on top or side
          if (e.face?.normal) {
             const normal = e.face.normal;
             const gridX = Math.round(e.point.x);
             const gridY = brick.y; 
             const gridZ = Math.round(e.point.z);
             
-            // Determine anchor placement based on click normal
             let targetX = gridX;
             let targetY = gridY;
             let targetZ = gridZ;
@@ -170,7 +140,7 @@ const SceneContent: React.FC<SceneProps> = ({
                 targetZ = gridZ + Math.round(normal.z);
             }
             
-            onDropGroup(targetX, targetY, targetZ);
+            onDropGroup(targetX, Math.max(0, targetY), targetZ);
          }
     }
   };
@@ -179,22 +149,25 @@ const SceneContent: React.FC<SceneProps> = ({
     e.stopPropagation();
     
     if (toolMode === 'MOVE' && liftedGroup) {
-        // While moving a group, hover logic is similar to build, determining where to drop
         if (e.face?.normal) {
             const normal = e.face.normal;
+            let targetX, targetY, targetZ;
+
             if (normal.y > 0.5) {
-                setHoverPos({
-                    x: Math.round(e.point.x),
-                    y: brick.y + 1,
-                    z: Math.round(e.point.z)
-                });
+                targetX = Math.round(e.point.x);
+                targetY = brick.y + 1;
+                targetZ = Math.round(e.point.z);
             } else {
-                setHoverPos({
-                    x: Math.round(e.point.x) + Math.round(normal.x),
-                    y: brick.y + Math.round(normal.y),
-                    z: Math.round(e.point.z) + Math.round(normal.z)
-                });
+                targetX = Math.round(e.point.x) + Math.round(normal.x);
+                targetY = brick.y + Math.round(normal.y);
+                targetZ = Math.round(e.point.z) + Math.round(normal.z);
             }
+
+            setHoverPos({
+                x: targetX,
+                y: Math.max(0, targetY), // Prevent underground
+                z: targetZ
+            });
         }
         return;
     }
@@ -213,13 +186,11 @@ const SceneContent: React.FC<SceneProps> = ({
         } else {
             setHoverPos({
                 x: gridX + Math.round(normal.x),
-                y: brick.y + Math.round(normal.y),
+                y: Math.max(0, brick.y + Math.round(normal.y)),
                 z: gridZ + Math.round(normal.z)
             });
         }
     } else if (toolMode === 'MOVE' && !liftedGroup) {
-        // Maybe highlight connected group here in future
-        // For now, just normal pointer
         document.body.style.cursor = 'grab';
     }
   };
@@ -232,6 +203,7 @@ const SceneContent: React.FC<SceneProps> = ({
 
   const activeSizeX = rotated ? selectedBrickType.sizeZ : selectedBrickType.sizeX;
   const activeSizeZ = rotated ? selectedBrickType.sizeX : selectedBrickType.sizeZ;
+  const activeSpecial = selectedBrickType.specialType;
 
   return (
     <>
@@ -259,8 +231,8 @@ const SceneContent: React.FC<SceneProps> = ({
               <Brick 
                 data={brick} 
                 onLand={playLandedSound} 
-                // Speed up animation: 35ms delay per brick instead of 100ms
-                delay={isAnimating ? index * 40 : 0} 
+                // Fast animation: 15ms
+                delay={isAnimating ? index * 15 : 0} 
               />
             </mesh>
           ))}
@@ -276,7 +248,8 @@ const SceneContent: React.FC<SceneProps> = ({
               z: hoverPos.z, 
               color: selectedColor,
               sizeX: activeSizeX,
-              sizeZ: activeSizeZ
+              sizeZ: activeSizeZ,
+              specialType: activeSpecial
             }} 
             isGhost 
           />
@@ -290,12 +263,12 @@ const SceneContent: React.FC<SceneProps> = ({
                         key={b.id}
                         data={{
                             ...b,
-                            // Render relative to the group anchor (which is at 0,0,0 of this group)
+                            // Ensure 0,0,0 relative to group
                             x: b.offsetX || 0,
                             y: b.offsetY || 0,
                             z: b.offsetZ || 0,
                         }}
-                        isGhost // Render as transparent/ghost
+                        isGhost 
                     />
                 ))}
             </group>

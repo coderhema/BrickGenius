@@ -18,7 +18,8 @@ export interface BrickData {
   color: string;
   sizeX?: number; // Width in studs (default 1)
   sizeZ?: number; // Depth in studs (default 1)
-  rotation?: number; // Rotation in radians (for animation/logic) currently simplified to axis alignment
+  rotation?: number; // Rotation in degrees (0 or 90)
+  specialType?: 'AXLE' | 'TIRE';
   
   // For lifted groups
   offsetX?: number; 
@@ -36,4 +37,5 @@ export interface BrickType {
   label: string;
   sizeX: number;
   sizeZ: number;
+  specialType?: 'AXLE' | 'TIRE';
 }

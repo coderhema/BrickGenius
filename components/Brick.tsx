@@ -1,33 +1,9 @@
 import React, { useRef, useEffect, useState, useMemo } from 'react';
-import { Color, Group, Mesh, BoxGeometry, MeshStandardMaterial, CylinderGeometry, Vector3 } from 'three';
-import { useFrame, Object3DNode } from '@react-three/fiber';
+import { Color, Group, Vector3, MathUtils } from 'three';
+import { useFrame } from '@react-three/fiber';
+import { Text } from '@react-three/drei';
 import { BrickData } from '../types';
 import { BRICK_HEIGHT, BRICK_WIDTH, BRICK_DEPTH, STUD_RADIUS, STUD_HEIGHT } from '../constants';
-
-// Extend JSX.IntrinsicElements to include Three.js elements managed by @react-three/fiber
-declare global {
-  namespace JSX {
-    interface IntrinsicElements {
-      group: any;
-      mesh: any;
-      boxGeometry: any;
-      meshStandardMaterial: any;
-      cylinderGeometry: any;
-    }
-  }
-}
-
-declare module 'react' {
-  namespace JSX {
-    interface IntrinsicElements {
-      group: any;
-      mesh: any;
-      boxGeometry: any;
-      meshStandardMaterial: any;
-      cylinderGeometry: any;
-    }
-  }
-}
 
 interface BrickProps {
   data: BrickData;
@@ -44,7 +20,6 @@ const Brick: React.FC<BrickProps> = ({ data, isGhost = false, onLand, delay = 0 
 
   // Animation state
   const targetY = data.y * BRICK_HEIGHT + (BRICK_HEIGHT / 2);
-  // Start high up in the sky for animation if not ghost
   const startY = 35 + Math.random() * 10;
   const [currentY, setCurrentY] = useState(isGhost ? targetY : startY);
   const [landed, setLanded] = useState(isGhost);
@@ -66,17 +41,16 @@ const Brick: React.FC<BrickProps> = ({ data, isGhost = false, onLand, delay = 0 
 
   useFrame((state, delta) => {
     if (isGhost) {
-      // If ghost, we strictly follow the props (or lerp to them for smooth "Hand" feel)
       if (meshRef.current) {
-         // If this is a simple ghost (builder mode), we set position directly.
-         meshRef.current.position.x = positionX;
-         meshRef.current.position.z = positionZ;
-         meshRef.current.position.y = targetY;
+         // Smooth Lerp for ghost movement (free moving feel)
+         const lerpFactor = 25 * delta;
+         meshRef.current.position.x = MathUtils.lerp(meshRef.current.position.x, positionX, lerpFactor);
+         meshRef.current.position.z = MathUtils.lerp(meshRef.current.position.z, positionZ, lerpFactor);
+         meshRef.current.position.y = MathUtils.lerp(meshRef.current.position.y, targetY, lerpFactor);
       }
       return;
     }
 
-    // Handle start delay
     if (isWaiting) {
       if (Date.now() > startTimeRef.current) {
         setIsWaiting(false);
@@ -85,40 +59,30 @@ const Brick: React.FC<BrickProps> = ({ data, isGhost = false, onLand, delay = 0 
     }
 
     if (!landed && meshRef.current) {
-      // Physics Constants - Tuned for "Locking" feel
-      // High gravity for fast drop
+      // Fast drops
       const gravity = 250; 
-      // Very low bounce for "hard plastic" snap
       const bounceFactor = 0.05; 
       
-      // Apply Gravity
       velocityY.current -= gravity * delta;
       let nextY = currentY + velocityY.current * delta;
 
-      // Floor Collision (Target Y)
       if (nextY <= targetY) {
         nextY = targetY;
         
-        // Bounce logic
-        if (Math.abs(velocityY.current) > 8) { // Higher threshold so small bounces stop immediately
-           // Bounce back up (very slightly)
+        if (Math.abs(velocityY.current) > 10) { 
            velocityY.current = -velocityY.current * bounceFactor;
-           
-           // Tiny squash effect on impact - barely perceptible for hard plastic
            setScaleY(0.98); 
         } else {
-           // Settled / Locked
            setLanded(true);
            velocityY.current = 0;
            setScaleY(1);
-           if (onLand) onLand(); // Play sound on impact
+           if (onLand) onLand();
         }
       }
 
       setCurrentY(nextY);
       meshRef.current.position.set(positionX, nextY, positionZ);
       
-      // Recover scale (elasticity) - Instant recovery for hard material
       if (scaleY < 1) {
           setScaleY(Math.min(1, scaleY + delta * 25));
       }
@@ -126,10 +90,8 @@ const Brick: React.FC<BrickProps> = ({ data, isGhost = false, onLand, delay = 0 
     }
   });
 
-  // Reset animation if ID changes (handled by key in Scene mostly, but safe to keep)
   useEffect(() => {
     if (!isGhost) {
-      // If props change significantly (like re-generation), reset state
       setLanded(false);
       setCurrentY(startY);
       setIsWaiting(delay > 0);
@@ -139,7 +101,6 @@ const Brick: React.FC<BrickProps> = ({ data, isGhost = false, onLand, delay = 0 
     }
   }, [data.id, isGhost, delay]);
 
-  // Defensive check for size array generation
   const safeSizeX = Math.max(1, Math.floor(sizeX));
   const safeSizeZ = Math.max(1, Math.floor(sizeZ));
 
@@ -151,6 +112,29 @@ const Brick: React.FC<BrickProps> = ({ data, isGhost = false, onLand, delay = 0 
     metalness: 0.1,
   };
 
+  // Rendering for Special Types
+  if (data.specialType === 'TIRE') {
+    // Tire Rendering (Vertical Wheel)
+    return (
+      <group ref={meshRef} position={[positionX, currentY, positionZ]} visible={!isWaiting}>
+        <group rotation={[0, data.rotation === 90 ? Math.PI / 2 : 0, Math.PI / 2]}>
+          {/* Tire Rubber */}
+          <mesh castShadow receiveShadow>
+             <cylinderGeometry args={[0.7, 0.7, 0.4, 24]} />
+             <meshStandardMaterial color="#111" roughness={0.9} />
+          </mesh>
+          {/* Rim */}
+          <mesh position={[0, 0, 0]}>
+             <cylinderGeometry args={[0.4, 0.4, 0.42, 16]} />
+             <meshStandardMaterial color="#ccc" metalness={0.5} roughness={0.2} />
+          </mesh>
+        </group>
+      </group>
+    );
+  }
+
+  const isAxle = data.specialType === 'AXLE';
+
   return (
     <group ref={meshRef} position={[positionX, currentY, positionZ]} visible={!isWaiting}>
       {/* Main Brick Body */}
@@ -159,17 +143,40 @@ const Brick: React.FC<BrickProps> = ({ data, isGhost = false, onLand, delay = 0 
         <meshStandardMaterial {...materialProps} />
       </mesh>
 
+      {/* Axle Peg (if axle) */}
+      {isAxle && (
+        <group position={[0, 0, sizeZ * BRICK_DEPTH / 2]}>
+             <mesh rotation={[Math.PI/2, 0, 0]}>
+                <cylinderGeometry args={[0.2, 0.2, 0.5, 12]} />
+                <meshStandardMaterial color="#999" />
+             </mesh>
+        </group>
+      )}
+
       {/* Studs */}
-      {/* We generate studs dynamically based on size */}
       {Array.from({ length: safeSizeX }).map((_, i) => (
           Array.from({ length: safeSizeZ }).map((_, j) => {
             const sx = (i * BRICK_WIDTH) - xOffset;
             const sz = (j * BRICK_DEPTH) - zOffset;
             return (
-              <mesh key={`${i}-${j}`} castShadow position={[sx, BRICK_HEIGHT / 2 + STUD_HEIGHT / 2, sz]}>
-                <cylinderGeometry args={[STUD_RADIUS, STUD_RADIUS, STUD_HEIGHT, 16]} />
-                <meshStandardMaterial {...materialProps} />
-              </mesh>
+              <group key={`${i}-${j}`} position={[sx, BRICK_HEIGHT / 2 + STUD_HEIGHT / 2, sz]}>
+                <mesh castShadow>
+                  <cylinderGeometry args={[STUD_RADIUS, STUD_RADIUS, STUD_HEIGHT, 16]} />
+                  <meshStandardMaterial {...materialProps} />
+                </mesh>
+                <Text
+                  rotation={[-Math.PI / 2, 0, 0]}
+                  position={[0, STUD_HEIGHT / 2 + 0.002, 0]}
+                  fontSize={0.038}
+                  color={isGhost ? data.color : "#000000"} 
+                  fillOpacity={isGhost ? 0.5 : 0.12}
+                  anchorX="center"
+                  anchorY="middle"
+                  renderOrder={1}
+                >
+                  BRICK GENIUS
+                </Text>
+              </group>
             )
           })
       ))}

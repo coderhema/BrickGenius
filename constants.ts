@@ -25,6 +25,8 @@ export const BRICK_TYPES: BrickType[] = [
   { label: '2x2', sizeX: 2, sizeZ: 2 },
   { label: '2x3', sizeX: 2, sizeZ: 3 },
   { label: '2x4', sizeX: 2, sizeZ: 4 },
+  { label: '2x2 Axle', sizeX: 2, sizeZ: 2, specialType: 'AXLE' },
+  { label: 'Wheel', sizeX: 1, sizeZ: 1, specialType: 'TIRE' },
 ];
 
 export const MAX_BOARD_SIZE = 20; // -10 to 10 grid
