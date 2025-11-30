@@ -1,145 +1,22 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import Scene from './components/Scene';
 import Controls from './components/Controls';
 import { BrickData, ToolMode, BrickColor, BrickType } from './types';
 import { BRICK_TYPES } from './constants';
 import { generateLegoFromImage } from './services/geminiService';
+import { optimizeBricks } from './utils/brickUtils';
+import { useSound } from './hooks/useSound';
+import { useHistory } from './hooks/useHistory';
 
-// Helper to optimize 1x1 voxels into larger standard bricks
-const optimizeBricks = (rawBricks: {x: number, y: number, z: number, color: string}[]): BrickData[] => {
-  if (!rawBricks || !Array.isArray(rawBricks)) return [];
-  
-  const optimized: BrickData[] = [];
-  
-  // Group bricks by Layer (Y) and Color
-  const bricksByLayerColor = new Map<string, Set<string>>();
-  
-  rawBricks.forEach(b => {
-    if (!b) return;
-    const key = `${b.y},${b.color}`;
-    if (!bricksByLayerColor.has(key)) {
-      bricksByLayerColor.set(key, new Set());
-    }
-    bricksByLayerColor.get(key)?.add(`${b.x},${b.z}`);
-  });
 
-  // Filter out special types for auto-optimization (keep strictly standard blocks)
-  const standardTypes = (BRICK_TYPES || []).filter(t => !t.specialType).sort((a, b) => 
-    (b.sizeX * b.sizeZ) - (a.sizeX * a.sizeZ)
-  );
-
-  // Process each layer/color group
-  bricksByLayerColor.forEach((coordsSet, key) => {
-    const [yStr, color] = key.split(',');
-    const y = parseInt(yStr);
-    
-    // Convert Set to array and sort to process systematically (top-left to bottom-right)
-    const coords = Array.from(coordsSet).map(c => {
-      const [x, z] = c.split(',').map(Number);
-      return { x, z };
-    }).sort((a, b) => {
-      if (a.z !== b.z) return a.z - b.z;
-      return a.x - b.x;
-    });
-
-    const processed = new Set<string>();
-
-    coords.forEach(({ x, z }) => {
-      const coordKey = `${x},${z}`;
-      if (processed.has(coordKey)) return;
-
-      // Try to fit the largest possible brick starting at (x, z)
-      let bestFit: { type: BrickType, rotated: boolean } | null = null;
-
-      for (const brickType of standardTypes) {
-         // Try Standard Orientation
-         let fit = true;
-         for(let i = 0; i < brickType.sizeX; i++) {
-           for(let j = 0; j < brickType.sizeZ; j++) {
-              if (!coordsSet.has(`${x + i},${z + j}`) || processed.has(`${x + i},${z + j}`)) {
-                fit = false;
-                break;
-              }
-           }
-           if(!fit) break;
-         }
-         if (fit) {
-           bestFit = { type: brickType, rotated: false };
-           break; // Found best fit because we are iterating by size desc
-         }
-
-         // Try Rotated Orientation (if dimensions differ)
-         if (brickType.sizeX !== brickType.sizeZ) {
-           fit = true;
-           // Rotated: sizeX acts as depth (z), sizeZ acts as width (x)
-           const rWidth = brickType.sizeZ;
-           const rDepth = brickType.sizeX;
-
-           for(let i = 0; i < rWidth; i++) {
-              for(let j = 0; j < rDepth; j++) {
-                 if (!coordsSet.has(`${x + i},${z + j}`) || processed.has(`${x + i},${z + j}`)) {
-                   fit = false;
-                   break;
-                 }
-              }
-              if(!fit) break;
-           }
-           if (fit) {
-              bestFit = { type: brickType, rotated: true };
-              break;
-           }
-         }
-      }
-
-      if (bestFit) {
-         const width = bestFit.rotated ? bestFit.type.sizeZ : bestFit.type.sizeX;
-         const depth = bestFit.rotated ? bestFit.type.sizeX : bestFit.type.sizeZ;
-
-         // Mark as processed
-         for(let i = 0; i < width; i++) {
-            for(let j = 0; j < depth; j++) {
-               processed.add(`${x + i},${z + j}`);
-            }
-         }
-
-         optimized.push({
-            id: uuidv4(),
-            x,
-            y,
-            z,
-            color,
-            sizeX: width,
-            sizeZ: depth,
-            rotation: bestFit.rotated ? 90 : 0 
-         });
-      } else {
-         // Fallback 1x1 
-         if (!processed.has(coordKey)) {
-            processed.add(coordKey);
-            optimized.push({
-               id: uuidv4(),
-               x,
-               y,
-               z,
-               color,
-               sizeX: 1,
-               sizeZ: 1
-            });
-         }
-      }
-    });
-  });
-
-  return optimized;
-};
 
 function App() {
-  const [bricks, setBricks] = useState<BrickData[]>([]);
-  // History Management
-  const [history, setHistory] = useState<BrickData[][]>([[]]);
-  const [currentHistoryIndex, setCurrentHistoryIndex] = useState(0);
+  // Use custom hooks
+  const { bricks, saveToHistory, undo, redo, canUndo, canRedo } = useHistory([]);
+  const { playLandedSound } = useSound();
 
+  // Component state
   const [toolMode, setToolMode] = useState<ToolMode>('VIEW');
   const [selectedColor, setSelectedColor] = useState<string>(BrickColor.RED);
   const [selectedBrickType, setSelectedBrickType] = useState<BrickType>(BRICK_TYPES?.[0] || { label: '1x1', sizeX: 1, sizeZ: 1 });
@@ -148,116 +25,6 @@ function App() {
   const [buildKey, setBuildKey] = useState(0);
   const [isAnimating, setIsAnimating] = useState(false);
   const [liftedGroup, setLiftedGroup] = useState<{ bricks: BrickData[], anchorId: string } | null>(null);
-
-  // Persistent AudioContext to prevent garbage collection issues and lag
-  const audioContextRef = useRef<AudioContext | null>(null);
-
-  // Sound Effect - Plays when a brick hits the ground/another brick
-  const playLandedSound = useCallback(() => {
-    try {
-      if (!audioContextRef.current) {
-        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-      }
-      
-      const ctx = audioContextRef.current;
-      if (ctx.state === 'suspended') {
-        ctx.resume().catch(console.error);
-      }
-      
-      const t = ctx.currentTime;
-      
-      // Layer 1: The "Click"
-      const oscClick = ctx.createOscillator();
-      const gainClick = ctx.createGain();
-      
-      oscClick.type = 'square';
-      oscClick.frequency.setValueAtTime(1200, t);
-      oscClick.frequency.exponentialRampToValueAtTime(600, t + 0.02);
-      
-      gainClick.gain.setValueAtTime(0.08, t);
-      gainClick.gain.exponentialRampToValueAtTime(0.001, t + 0.03);
-      
-      oscClick.connect(gainClick);
-      gainClick.connect(ctx.destination);
-      
-      oscClick.start(t);
-      oscClick.stop(t + 0.04);
-      
-      // Layer 2: The "Clack"
-      const oscClack = ctx.createOscillator();
-      const gainClack = ctx.createGain();
-      
-      oscClack.type = 'sine';
-      const basePitch = 350 + (Math.random() * 60 - 30); 
-      oscClack.frequency.setValueAtTime(basePitch, t);
-      oscClack.frequency.exponentialRampToValueAtTime(100, t + 0.08);
-      
-      gainClack.gain.setValueAtTime(0.15, t);
-      gainClack.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
-      
-      oscClack.connect(gainClack);
-      gainClack.connect(ctx.destination);
-      
-      oscClack.start(t);
-      oscClack.stop(t + 0.12);
-
-    } catch (e) {
-      console.warn("Audio play failed", e);
-    }
-  }, []);
-
-  // ---- History Logic ----
-  const saveToHistory = useCallback((newBricks: BrickData[]) => {
-    setHistory(prev => {
-      const newHistory = prev.slice(0, currentHistoryIndex + 1);
-      newHistory.push(newBricks);
-      return newHistory;
-    });
-    setCurrentHistoryIndex(prev => prev + 1);
-    setBricks(newBricks);
-  }, [currentHistoryIndex]);
-
-  const undo = useCallback(() => {
-    if (currentHistoryIndex > 0) {
-      const newIndex = currentHistoryIndex - 1;
-      setCurrentHistoryIndex(newIndex);
-      if (history[newIndex]) {
-        setBricks(history[newIndex]);
-        setLiftedGroup(null);
-      }
-    }
-  }, [history, currentHistoryIndex]);
-
-  const redo = useCallback(() => {
-    if (currentHistoryIndex < history.length - 1) {
-      const newIndex = currentHistoryIndex + 1;
-      setCurrentHistoryIndex(newIndex);
-      if (history[newIndex]) {
-        setBricks(history[newIndex]);
-        setLiftedGroup(null);
-      }
-    }
-  }, [history, currentHistoryIndex]);
-
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.metaKey || e.ctrlKey) {
-        if (e.key.toLowerCase() === 'z') {
-          if (e.shiftKey) {
-            redo();
-          } else {
-            undo();
-          }
-          e.preventDefault();
-        } else if (e.key.toLowerCase() === 'y') {
-          redo();
-          e.preventDefault();
-        }
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [undo, redo]);
 
 
   // Helper: Get Liftable Group (Upwards only)
@@ -426,6 +193,11 @@ function App() {
     setLiftedGroup(null);
   }, [saveToHistory]);
 
+  // Reset lifted group on undo/redo
+  useEffect(() => {
+    setLiftedGroup(null);
+  }, [bricks]);
+
   const handleReplay = useCallback(() => {
     setIsAnimating(true);
     setBuildKey(prev => prev + 1);
@@ -482,8 +254,8 @@ function App() {
         hasBricks={bricks?.length > 0}
         onUndo={undo}
         onRedo={redo}
-        canUndo={currentHistoryIndex > 0}
-        canRedo={currentHistoryIndex < history.length - 1}
+        canUndo={canUndo}
+        canRedo={canRedo}
       />
       <Scene 
         bricks={bricks || []} 
