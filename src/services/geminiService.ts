@@ -2,8 +2,8 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { GeneratedBuild } from "../types";
 
 // Initialize Gemini client
-// We assume process.env.API_KEY is available as per instructions.
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Using Vite's environment variable syntax
+const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_API_KEY });
 
 /**
  * Converts a file object to a Base64 string.
@@ -27,7 +27,7 @@ export const generateLegoFromImage = async (imageFile: File): Promise<GeneratedB
     const base64Image = await fileToGenerativePart(imageFile);
 
     const model = "gemini-2.5-flash";
-    
+
     const prompt = `
       Analyze this image and create a 3D voxel/LEGO representation of the main subject.
       Return a JSON object containing a list of "bricks".
