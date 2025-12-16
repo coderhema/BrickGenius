@@ -1,9 +1,16 @@
 import React, { useRef, useEffect, useState, useMemo } from 'react';
 import { Color, Group, Vector3, MathUtils } from 'three';
-import { useFrame } from '@react-three/fiber';
+import { useFrame, ThreeElements } from '@react-three/fiber';
 import { Text } from '@react-three/drei';
 import { BrickData } from '../types';
 import { BRICK_HEIGHT, BRICK_WIDTH, BRICK_DEPTH, STUD_RADIUS, STUD_HEIGHT } from '../constants';
+
+// Add type support for Three.js elements in JSX
+declare global {
+  namespace JSX {
+    interface IntrinsicElements extends ThreeElements {}
+  }
+}
 
 interface BrickProps {
   data: BrickData;

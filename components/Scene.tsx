@@ -1,10 +1,17 @@
 import React, { useState } from 'react';
-import { Canvas, ThreeEvent, Object3DNode } from '@react-three/fiber';
+import { Canvas, ThreeEvent, Object3DNode, ThreeElements } from '@react-three/fiber';
 import { OrbitControls, Environment, Grid } from '@react-three/drei';
 import { BrickData, ToolMode, BrickType } from '../types';
 import { MAX_BOARD_SIZE } from '../constants';
 import Brick from './Brick';
 import { Vector3, Group, Mesh, PlaneGeometry, MeshStandardMaterial, AmbientLight, DirectionalLight, OrthographicCamera } from 'three';
+
+// Add type support for Three.js elements in JSX
+declare global {
+  namespace JSX {
+    interface IntrinsicElements extends ThreeElements {}
+  }
+}
 
 interface SceneProps {
   bricks: BrickData[];
